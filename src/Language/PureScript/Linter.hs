@@ -3,6 +3,8 @@
 --
 module Language.PureScript.Linter (lint, module L) where
 
+import Debug.Trace (traceShow)
+
 import Prelude.Compat
 import Protolude (ordNub)
 
@@ -21,6 +23,31 @@ import Language.PureScript.Linter.Exhaustive as L
 import Language.PureScript.Linter.Imports as L
 import Language.PureScript.Names
 import Language.PureScript.Types
+
+{-
+  data Expr =
+      Var Name
+    | App Expr Expr
+    | Let Name Expr
+
+  data Scope = Scope { freeVars :: Set Name, unusedVars :: Set (SrcPosInfo, Name) }
+  -- or: scope :: Expr -> Scope
+  freeVars :: Expr -> Set Name
+  freeVars expr =
+    case expr of
+      Var n -> S.singleton n
+      App f x -> S.union (freeVars f) (freeVars x)
+      Let n x inY -> S.union (fv x) (S.delete n (fv inY))
+
+  unusedVars :: Expr -> Set Name
+  unusedVars expr =
+    case expr of
+      Let n x y ->
+        if S.member n (fv y)
+          then -- ... used
+          else -- ... not-used
+-}
+
 
 -- | Lint the PureScript AST.
 -- |
@@ -42,7 +69,13 @@ lint (Module _ _ mn ds _) = censor (addHint (ErrorInModule mn)) $ mapM_ lintDecl
   lintDeclaration :: Declaration -> m ()
   lintDeclaration = tell . f
     where
-    (warningsInDecl, _, _, _, _) = everythingWithScope (\_ _ -> mempty) stepE stepB (\_ _ -> mempty) stepDo
+    (warningsInDecl, _, _, _, _) =
+      everythingWithScope
+        (\_ _ -> mempty)
+        (\i e -> checkShadowedInE i e <> checkUnusedInE e)
+        stepB
+        (\_ _ -> mempty)
+        stepDo
 
     f :: Declaration -> MultipleErrors
     f (PositionedDeclaration pos _ dec) = addHint (PositionedError pos) (f dec)
@@ -55,14 +88,50 @@ lint (Module _ _ mn ds _) = censor (addHint (ErrorInModule mn)) $ mapM_ lintDecl
     f' s (TypeDeclaration name ty) = addHint (ErrorInTypeDeclaration name) (checkTypeVars s ty)
     f' s dec = warningsInDecl moduleNames dec <> checkTypeVarsInDecl s dec
 
-    stepE :: S.Set Ident -> Expr -> MultipleErrors
-    stepE s (Abs (Left name) _) | name `S.member` s = errorMessage (ShadowedName name)
-    stepE s (Let ds' _) = foldMap go ds'
+    checkUnusedInE :: Expr -> MultipleErrors -- Pos would be nice.
+    checkUnusedInE expr =
+      mempty -- unused mempty mempty expr
+      where
+        unused :: S.Set Ident -> S.Set Ident -> Expr -> S.Set Ident
+        unused introd consumed te = case te of
+          Literal (ArrayLiteral es) -> mempty -- TODO: Fold on sub-expressions w/ <>.
+          Literal (ObjectLiteral eMap) -> mempty
+          Literal _ -> mempty
+          UnaryMinus e -> same e
+          BinaryNoParens e1 e2 e3 -> mempty
+          Parens e -> same e
+          ObjectGetter _ -> mempty -- TODO: _.x will always not use a var; is that fine?
+          Accessor _ e -> same e
+          ObjectUpdate e eMap -> mempty
+          Abs (Left i) e -> mempty
+          Abs (Right b) e -> mempty
+          App e1 e2 -> mempty
+          Var (Qualified mm i) -> mempty
+          Op _ -> mempty -- No operator declarations inside an expression
+          IfThenElse ep e1 e2 -> mempty
+          Constructor _ -> mempty -- WTF is this. It's not using a constructor to create a value; that would need Expr somewhere.
+          Case es cases -> mempty -- [CaseAlternative] needs exploring as well.
+          TypedValue _ e _ -> mempty
+          Let decs e -> mempty
+          Do dos -> mempty -- Value, Bind, Let and PositionedElement(?) fun.
+          TypeClassDictionaryConstructorApp _ e -> same e
+          TypeClassDictionary _ _ -> mempty -- TODO: I _don't_ think the Ident in here is for us.
+          TypeClassDictionaryAccessor _ i -> mempty -- TODO: ...?
+          SuperClassDictionary _ _ -> mempty
+          AnonymousArgument -> mempty
+          Hole _ -> mempty
+          PositionedValue _ _ e -> traceShow e $ same e -- TODO: Use the pos info.
+          where
+            same = unused introd consumed
+
+    checkShadowedInE :: S.Set Ident -> Expr -> MultipleErrors
+    checkShadowedInE s (Abs (Left name) _) | name `S.member` s = errorMessage (ShadowedName name)
+    checkShadowedInE s (Let ds' _) = foldMap go ds'
       where
       go d | Just i <- getDeclIdent d
            , i `S.member` s = errorMessage (ShadowedName i)
            | otherwise = mempty
-    stepE _ _ = mempty
+    checkShadowedInE _ _ = mempty
 
     stepB :: S.Set Ident -> Binder -> MultipleErrors
     stepB s (VarBinder name) | name `S.member` s = errorMessage (ShadowedName name)

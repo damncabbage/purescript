@@ -28,14 +28,14 @@ main = do
   heading "Main compiler test suite"
   TestCompiler.main
   heading "Documentation test suite"
-  TestDocs.main
-  TestPrimDocs.main
+  --TestDocs.main
+  --TestPrimDocs.main
   heading "psc-publish test suite"
-  TestPscPublish.main
+  --TestPscPublish.main
   heading "psci test suite"
-  TestPsci.main
+  --TestPsci.main
   heading "psc-ide test suite"
-  TestPscIde.main
+  --TestPscIde.main
 
   where
   heading msg = do
