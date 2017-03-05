@@ -15,6 +15,7 @@ import Data.Maybe (mapMaybe)
 import Data.Monoid
 import qualified Data.Set as S
 import Data.Text (Text)
+import qualified Data.Text as T
 
 import Language.PureScript.AST
 import Language.PureScript.Crash
@@ -90,39 +91,52 @@ lint (Module _ _ mn ds _) = censor (addHint (ErrorInModule mn)) $ mapM_ lintDecl
 
     checkUnusedInE :: Expr -> MultipleErrors -- Pos would be nice.
     checkUnusedInE expr =
-      mempty -- unused mempty mempty expr
+      if S.null unused
+        then mempty
+        else
+          singleError . ErrorMessage [] . UnusedVar .
+            T.intercalate ", " . map showIdent . S.toList $
+              unused
       where
-        unused :: S.Set Ident -> S.Set Ident -> Expr -> S.Set Ident
-        unused introd consumed te = case te of
-          Literal (ArrayLiteral es) -> mempty -- TODO: Fold on sub-expressions w/ <>.
-          Literal (ObjectLiteral eMap) -> mempty
-          Literal _ -> mempty
+        unused = S.difference introduced consumed
+        (introduced, consumed) = go mempty mempty expr
+        go :: S.Set Ident -> S.Set Ident -> Expr -> (S.Set Ident, S.Set Ident)
+        go intrd consd te = case te of
+          Literal (ArrayLiteral es) -> stop -- TODO: Fold on sub-expressions w/ <>.
+          Literal (ObjectLiteral eMap) -> stop
+          Literal _ -> stop
           UnaryMinus e -> same e
-          BinaryNoParens e1 e2 e3 -> mempty
+          BinaryNoParens e1 e2 e3 -> stop
           Parens e -> same e
-          ObjectGetter _ -> mempty -- TODO: _.x will always not use a var; is that fine?
           Accessor _ e -> same e
-          ObjectUpdate e eMap -> mempty
-          Abs (Left i) e -> mempty
-          Abs (Right b) e -> mempty
-          App e1 e2 -> mempty
-          Var (Qualified mm i) -> mempty
-          Op _ -> mempty -- No operator declarations inside an expression
-          IfThenElse ep e1 e2 -> mempty
-          Constructor _ -> mempty -- WTF is this. It's not using a constructor to create a value; that would need Expr somewhere.
-          Case es cases -> mempty -- [CaseAlternative] needs exploring as well.
-          TypedValue _ e _ -> mempty
-          Let decs e -> mempty
-          Do dos -> mempty -- Value, Bind, Let and PositionedElement(?) fun.
+          ObjectUpdate e eMap -> stop
+          Abs (Left i) e -> stop
+          Abs (Right b) e -> stop
+          App e1 e2 -> stop
+          Var (Qualified mm i) -> stop
+          Op _ -> stop -- No operator declarations inside an expression
+          IfThenElse ep e1 e2 -> stop
+          Constructor _ -> stop -- WTF is this. It's not using a constructor to create a value; that would need Expr somewhere.
+          Case es cases -> stop -- [CaseAlternative] needs exploring as well.
+          TypedValue _ e _ -> stop
+          Let decs e -> stop
+          {-
+            case decs of
+              ValueDeclaration i _ bs ee -> stop
+              PositionedDeclaration _ _ (ValueDeclaration i _ bs ee) -> stop
+              _ -> stop
+          -}
+          Do dos -> stop -- Value, Bind, Let and PositionedElement(?) fun.
           TypeClassDictionaryConstructorApp _ e -> same e
-          TypeClassDictionary _ _ -> mempty -- TODO: I _don't_ think the Ident in here is for us.
-          TypeClassDictionaryAccessor _ i -> mempty -- TODO: ...?
-          SuperClassDictionary _ _ -> mempty
-          AnonymousArgument -> mempty
-          Hole _ -> mempty
+          TypeClassDictionary _ _ _ -> stop -- TODO: I _don't_ think the Ident in here is for us.
+          TypeClassDictionaryAccessor _ i -> stop -- TODO: ...?
+          DeferredDictionary _ _ -> stop
+          AnonymousArgument -> stop
+          Hole _ -> stop
           PositionedValue _ _ e -> traceShow e $ same e -- TODO: Use the pos info.
           where
-            same = unused introd consumed
+            stop = (mempty, mempty)
+            same = go intrd consd
 
     checkShadowedInE :: S.Set Ident -> Expr -> MultipleErrors
     checkShadowedInE s (Abs (Left name) _) | name `S.member` s = errorMessage (ShadowedName name)

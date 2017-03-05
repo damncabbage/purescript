@@ -148,7 +148,7 @@ data SimpleErrorMessage
   -- | a declaration couldn't be used because there wouldn't be enough information
   -- | to choose an instance
   | UnusableDeclaration Ident
-  | UnusedVar String
+  | UnusedVar Text
   deriving (Show)
 
 -- | Error message hints, providing more detailed information about failure.

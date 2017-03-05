@@ -173,6 +173,7 @@ errorCode em = case unwrapErrorMessage em of
   ClassInstanceArityMismatch{} -> "ClassInstanceArityMismatch"
   UserDefinedWarning{} -> "UserDefinedWarning"
   UnusableDeclaration{} -> "UnusableDeclaration"
+  UnusedVar{} -> "UnusedVar"
 
 -- | A stack trace for an error
 newtype MultipleErrors = MultipleErrors
@@ -903,6 +904,8 @@ prettyPrintSingleError (PPEOptions codeColor full level showDocs) e = flip evalS
       paras [ line $ "The declaration " <> markCode (showIdent ident) <> " is unusable."
             , line $ "This happens when a constraint couldn't possibly have enough information to work out which instance is required."
             ]
+    renderSimpleErrorMessage (UnusedVar msg) =
+      line $ "Variable " <> markCode msg <> " was declared but not used."
 
     renderHint :: ErrorMessageHint -> Box.Box -> Box.Box
     renderHint (ErrorUnifyingTypes t1 t2) detail =
